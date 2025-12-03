@@ -10,14 +10,14 @@ Key speedups:
  - requests.Session() pooling
 """
 
+from typing import Optional
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import io
-import math
-import os
 import re
-import sys
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
+import os
 
 import numpy as np
 import pandas as pd
@@ -35,7 +35,7 @@ except Exception:
 # -----------------------------
 # CONFIG (edit as needed)
 # -----------------------------
-API_KEY = "q2JAoskUtsKUr6Odl95WV2qoRQPgkNqn"
+API_KEY = os.getenv("API_KEY")
 TABLEVIEW_ID = "134"
 BASE_URL = f"https://applications.bevisioneers.world/api/tableviews/{TABLEVIEW_ID}/tabledata"
 SCORESHEET_BASE_URL = "https://applications.bevisioneers.world/api"
@@ -902,16 +902,24 @@ def compute_total_admissions_and_rankings(df: pd.DataFrame):
         method="min", ascending=False).astype("Int64")
     return df
 
+
 # -----------------------------
 # Scoresheet upload (bulk then fallback)
 # -----------------------------
 
+MAX_WORKERS = 3                # Lower concurrency to avoid 429
+RETRY_SLEEP = 2.5              # Wait after 429
+MAX_RETRIES = 5                # Retry attempts
 
-def push_scores_bulk_or_concurrent(df: pd.DataFrame, scoresheet_id: int, score_col: str, comment_col: Optional[str] = None, dry_run: bool = True):
-    """
-    Try bulk endpoint first (batch size BULK_BATCH_SIZE).
-    If bulk endpoint returns 404 or not supported, fallback to concurrent per-record upload.
-    """
+
+def push_scores_bulk_or_concurrent(
+    df: pd.DataFrame,
+    scoresheet_id: int,
+    score_col: str,
+    comment_col: Optional[str] = None,
+    dry_run: bool = True
+):
+
     if score_col not in df.columns:
         print(f"⚠️ Score column '{score_col}' not in df, skipping.")
         return
@@ -921,81 +929,78 @@ def push_scores_bulk_or_concurrent(df: pd.DataFrame, scoresheet_id: int, score_c
         print("ℹ️ No scores to send for", score_col)
         return
 
-    bulk_url = f"{SCORESHEET_BASE_URL}/scoresheets/{scoresheet_id}/scores/bulk"
-    session.headers.update(
-        {"Accept": "application/json", "Authorization": f'DREAM apikey=\"{API_KEY}\"'})
+    session.headers.update({
+        "Accept": "application/json",
+        "Authorization": f'DREAM apikey=\"{API_KEY}\"'
+    })
 
-    # Build payload list
-    def row_to_payload(row):
+    # Create payloads
+    payloads = []
+    for _, row in df_valid.iterrows():
         try:
             app_id = int(row[APPLICATION_ID_COLUMN])
         except Exception:
-            return None
+            continue
+
         raw_points = float(row[score_col])
-        points_for_api = int(raw_points) if float(
-            raw_points).is_integer() else f"{raw_points:.2f}"
-        payload = {"application": app_id, "points": points_for_api}
+        points = int(raw_points) if raw_points.is_integer(
+        ) else f"{raw_points:.2f}"
+
+        payload = {"application": app_id, "points": points}
+
         if comment_col and comment_col in row.index:
             c = row[comment_col]
             if isinstance(c, str) and c.strip():
                 payload["comments"] = c.strip()
-        return payload
 
-    payloads = []
-    for _, row in df_valid.iterrows():
-        p = row_to_payload(row)
-        if p is not None:
-            payloads.append(p)
+        payloads.append(payload)
 
     if dry_run:
         print(
-            f"[DRY RUN] Would send {len(payloads)} items to scoresheet {scoresheet_id} (bulk preferred).")
+            f"[DRY RUN] Would send {len(payloads)} items to scoresheet {scoresheet_id}.")
         return
 
-    # Try bulk in chunks
-    success = True
-    for start in range(0, len(payloads), BULK_BATCH_SIZE):
-        chunk = payloads[start:start + BULK_BATCH_SIZE]
-        try:
-            r = session.post(bulk_url, json=chunk, timeout=REQUESTS_TIMEOUT)
-            if r.status_code in (200, 201, 204):
-                pass
-            else:
-                # If bulk endpoint not supported or error, fallback
-                success = False
-                print(f"Bulk upload returned {r.status_code}: {r.text[:200]}")
-                break
-        except Exception as e:
-            success = False
-            print("Bulk upload error:", e)
-            break
-
-    if success:
-        print(
-            f"✅ Bulk uploaded {len(payloads)} scores to scoresheet {scoresheet_id}")
-        return
-
-    # Fallback: concurrent per-record posts
-    print("ℹ️ Falling back to concurrent per-record uploads...")
+    # ----------------------------------------------------
+    # SAFE CONCURRENT SENDER WITH RATE LIMIT + RETRIES
+    # ----------------------------------------------------
     per_url = f"{SCORESHEET_BASE_URL}/scoresheets/{scoresheet_id}/scores"
 
-    def send_payload(payload):
-        try:
-            r = session.post(per_url, data=payload, timeout=REQUESTS_TIMEOUT)
-            return r.status_code, r.text
-        except Exception as e:
-            return None, str(e)
+    def send_with_retry(payload):
+        retries = 0
 
-    with ThreadPoolExecutor(max_workers=CONCURRENT_WORKERS) as exe:
-        futures = {exe.submit(send_payload, p): p for p in payloads}
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Uploading scores", leave=False):
-            status, text = fut.result()
-            # optionally log issues
-            if status not in (200, 201, 204):
-                print("Upload issue:", status, text[:200])
+        while retries < MAX_RETRIES:
+            try:
+                r = session.post(per_url, data=payload, timeout=10)
+
+                if r.status_code in (200, 201, 204):
+                    return True, r.status_code, r.text
+
+                if r.status_code == 429:
+                    time.sleep(RETRY_SLEEP)
+                    retries += 1
+                    continue
+
+                return False, r.status_code, r.text
+
+            except Exception as e:
+                time.sleep(1)
+                retries += 1
+
+        return False, None, f"Failed after {MAX_RETRIES} retries"
 
     print(
-        f"✅ Concurrent uploaded {len(payloads)} scores to scoresheet {scoresheet_id}")
+        f"ℹ️ Uploading {len(payloads)} scores to scoresheet {scoresheet_id} (rate-limited)...")
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        futures = [pool.submit(send_with_retry, p) for p in payloads]
+
+        for fut in tqdm(as_completed(futures), total=len(futures), desc="Uploading", leave=False):
+            success, status, text = fut.result()
+            if not success:
+                print("⚠️ Upload issue:", status, text[:200])
+
+    print(
+        f"✅ Uploaded {len(payloads)} scores to scoresheet {scoresheet_id} (rate-safe)")
 
 # -----------------------------
 # Flags (concurrent)
@@ -1025,8 +1030,31 @@ def apply_flag_rules(df: pd.DataFrame, dry_run: bool = True):
     FLAG_OUT_OF_AGE_RANGE = 78
     FLAG_NOT_ELIGIBLE_REVENUE = 77
 
-    ALLOWED_COUNTRY_NAMES = {...}  # keep your allowed list here
-    ALLOWED_COUNTRY_CODES = {...}  # keep your allowed list here
+    ALLOWED_COUNTRY_NAMES = {
+        "Albania", "Andorra", "Argentina", "Åland Islands", "Aland Islands",
+        "Australia", "Austria", "Belgium", "Bosnia and Herzegovina", "Bulgaria",
+        "Canada", "Chile", "Costa Rica", "Croatia", "Cyprus", "Czechia",
+        "Denmark", "Estonia", "Faroe Islands", "Finland", "France", "Germany",
+        "Gibraltar", "Greece", "Guernsey", "Hong Kong", "Hong Kong SAR China",
+        "Hungary", "Iceland", "India", "Indonesia", "Ireland", "Italy", "Japan",
+        "Jersey", "Kenya", "Kosovo", "Latvia", "Liechtenstein", "Lithuania",
+        "Luxembourg", "Malta", "Malaysia", "Mexico", "Monaco", "Montenegro",
+        "Netherlands", "Nigeria", "North Macedonia", "Norway", "Panama",
+        "Philippines", "Poland", "Portugal", "Romania", "Rwanda", "San Marino",
+        "Serbia", "Singapore", "Slovakia", "Slovenia", "South Africa",
+        "South Korea", "Spain", "Svalbard and Jan Mayen", "Sweden", "Switzerland",
+        "Tanzania", "Thailand", "Turkey", "Türkiye", "Uganda", "United Kingdom",
+        "United States", "Vietnam", "Zimbabwe"
+    }
+
+    # Allowed country codes (for "Where do you want to implement your project idea?")
+    ALLOWED_COUNTRY_CODES = {
+        "AL", "AD", "AR", "AX", "AU", "AT", "BE", "BA", "BG", "CA", "CL", "CR", "HR", "CY", "CZ",
+        "DK", "EE", "FO", "FI", "FR", "DE", "GI", "GR", "GG", "HK", "HU", "IS", "IN", "ID", "IE",
+        "IT", "JP", "JE", "KE", "XK", "LV", "LI", "LT", "LU", "MT", "MY", "MX", "MC", "ME", "NL",
+        "NG", "MK", "NO", "PA", "PH", "PL", "PT", "RO", "RW", "SM", "RS", "SG", "SK", "SI", "ZA",
+        "KR", "ES", "SJ", "SE", "CH", "TZ", "TH", "TR", "UG", "GB", "US", "VN", "ZW"
+    }
 
     DOB_MIN = datetime(1997, 1, 26).date()
     DOB_MAX = datetime(2009, 9, 17).date()
