@@ -2,7 +2,7 @@ name: Run Alignment Script
 
 on:
   schedule:
-    - cron: "*/30 * * * *" # Every 30 minutes
+    - cron: "0 * * * *" # At minute 0 of every hour
   workflow_dispatch:
 
 jobs:
