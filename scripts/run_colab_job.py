@@ -1114,18 +1114,6 @@ def apply_flag_rules(df: pd.DataFrame, dry_run: bool = True):
     print("✅ Flags processed")
 
 # -----------------------------
-# Export
-# -----------------------------
-
-
-def export_to_xlsx(df: pd.DataFrame, filename: str):
-    if DRY_RUN_EXPORT:
-        print(f"[DRY RUN] Would export {filename}")
-        return
-    df.to_excel(filename, index=False, engine="openpyxl")
-    print("📥 Exported:", filename)
-
-# -----------------------------
 # Main pipeline
 # -----------------------------
 
@@ -1184,10 +1172,6 @@ def main():
     # Flags
     print("Applying flag rules...")
     apply_flag_rules(df, dry_run=DRY_RUN_FLAGS)
-
-    # Export
-    out_file = "dreamapply_self_assessment_scores_with_flags_alignment_and_rankings_optimized.xlsx"
-    export_to_xlsx(df, out_file)
 
     print("Done.")
 
