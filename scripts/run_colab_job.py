@@ -2,7 +2,6 @@ import requests
 import pandas as pd
 import io
 import numpy as np
-from google.colab import files
 from datetime import datetime
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
@@ -1749,11 +1748,3 @@ def apply_flag_rules(df, api_key, dry_run=True):
 # ============================
 print("\n---- APPLY FLAG RULES ----")
 apply_flag_rules(df, API_KEY, dry_run=DRY_RUN_FLAGS)
-
-# -----------------------------
-# EXPORT TO XLSX + DOWNLOAD
-# -----------------------------
-output_filename = "dreamapply_self_assessment_scores_with_flags_alignment_and_rankings.xlsx"
-df.to_excel(output_filename, index=False, engine='openpyxl')
-files.download(output_filename)
-print("📥 XLSX file generated and ready for download:", output_filename)
