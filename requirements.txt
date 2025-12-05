@@ -1,6 +1,9 @@
 requests>=2.31.0
-pandas>=2.1.1
+pandas>=2.1.0
+openpyxl>=3.1.2          # Needed if you are reading/writing Excel files with pandas
 numpy>=1.27.0
-torch>=2.2.0
 sentence-transformers>=2.2.2
 tqdm>=4.66.0
+torch>=2.1.0
+regex>=2025.12.2          # To cover the 're' module enhancements if needed
+
