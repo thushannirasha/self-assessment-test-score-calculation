@@ -989,7 +989,6 @@ if __name__ == "__main__":
 
     print("Formatting for HubSpot...")
     hubspot_objects = format_for_hubspot(df)
-    print(hubspot_objects)
     print(f"Prepared {len(hubspot_objects)} objects for HubSpot.")
     upload_to_hubspot(hubspot_objects)
     print("Upload completed successfully!")
