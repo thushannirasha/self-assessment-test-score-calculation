@@ -1,8 +1,8 @@
 name: Economically Disadvantage Status Calculation
 
 on:
-  schedule:
-    - cron: "0 */2 * * *" # Every 2 hours at minute 0
+  # schedule:
+  #   - cron: "0 * * * *" # Every 1 hour, at the start of the hour
   workflow_dispatch:
 
 jobs:
