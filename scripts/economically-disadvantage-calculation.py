@@ -16,9 +16,11 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logging.getLogger("pandas_datareader").setLevel(logging.CRITICAL)
 
-# Load the csv file
-file_path = "Economically Disadvantaged calculation C3 - World Bank Country Groups.csv"
+# Load the csv files
+file_path = "data/Economically Disadvantaged calculation C3 - World Bank Country Groups.csv"
+poverty_rates_file = "data/Economically Disadvantaged calculation C3 - Poverty Rates.csv"
 country_groups_df = pd.read_csv(file_path)
+poverty_rates_df = pd.read_csv(poverty_rates_file)
 
 # ---- Constant poverty lines in USD ----
 
@@ -152,11 +154,6 @@ def calculate_benchmark_pa_in_local_currency_model_2(
         benchmark = model_2_poverty_line_in_euro_yearly * part * exchange_rate_to_euro
 
     return benchmark
-
-
-# ---- Load CSV files ----
-poverty_rates_file = "Economically Disadvantaged calculation C3 - Poverty Rates.csv"
-poverty_rates_df = pd.read_csv(poverty_rates_file)
 
 # ---- Lookup functions ----
 
