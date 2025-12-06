@@ -1,0 +1,31 @@
+name: Run Alignment Script
+
+on:
+  schedule:
+    - cron: "0 */2 * * *" # Every 2 hours at minute 0
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    env:
+      DREAM_APPLY_API_KEY: ${{ secrets.DREAM_APPLY_API_KEY }}
+      DREAM_APPLY_TABLE_ID: ${{ secrets.DREAM_APPLY_TABLE_ID }}
+      HUBSPOT_API_KEY: ${{ secrets.HUBSPOT_API_KEY }}
+      HUBSPOT_OBJECT_TYPE: ${{ secrets.HUBSPOT_OBJECT_TYPE }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run script
+        run: python scripts/dream-apply-to-hubspot.py

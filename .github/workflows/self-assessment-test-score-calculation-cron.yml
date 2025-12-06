@@ -1,4 +1,4 @@
-name: Run Alignment Script
+name: Self Assessment Test Score Calculation
 
 on:
   schedule:
@@ -25,4 +25,4 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run script
-        run: python scripts/run_colab_job.py
+        run: python scripts/self-assessment-test-score-calculation.py

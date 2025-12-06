@@ -46,8 +46,6 @@ SCORESHEET_MAP = {
     "Worldwide Ranking":                    163,  # new
 }
 
-CHANGE_CHECK_IDS = set(range(140, 153))  # 140–152 inclusive
-
 # Mapping: which score columns should also send comments
 SCORESHEET_COMMENTS = {
     "Semantic Uniqueness Score":            "Semantic Similarity Comment",
@@ -489,15 +487,12 @@ def push_scores_to_dreamapply(
     score_col,
     comment_col=None,
     dry_run=True,
-    existing_scores=None,
 ):
-    """
-    If existing_scores is provided → only push changed rows.
-    If existing_scores is None → push all scores normally.
-    """
+    existing_scores = fetch_existing_scores(scoresheet_id, api_key)
 
     df_valid = dataframe[dataframe[score_col].notna()].copy()
-    print(f"Found {len(df_valid)} rows with scores in column '{score_col}'.")
+    print(
+        f"Found {len(df_valid)} rows with scores in column '{score_col}' to evaluate.")
 
     for idx, row in df_valid.iterrows():
         app_id = row[app_id_col]
@@ -512,26 +507,25 @@ def push_scores_to_dreamapply(
             raw_points) if raw_points.is_integer() else round(raw_points, 2)
 
         comment_val = None
-        if comment_col and isinstance(row.get(comment_col), str):
-            comment_val = row[comment_col].strip()
+        if comment_col is not None and comment_col in row:
+            comment_val = row[comment_col]
+            if isinstance(comment_val, str):
+                comment_val = comment_val.strip()
 
-        # --- ONLY DO CHANGE CHECK FOR 140–152 ---
-        if existing_scores is not None:
-            old = existing_scores.get(app_id_int)
-
-            changed = False
-            if old is None:
+        # Check if this application has changed
+        existing = existing_scores.get(app_id_int)
+        changed = False
+        if existing is None:
+            changed = True  # new entry
+        else:
+            if float(existing["points"]) != float(points_for_api):
                 changed = True
-            else:
-                if float(old["points"]) != float(points_for_api):
-                    changed = True
-                elif comment_val != old.get("comments", ""):
-                    changed = True
+            elif comment_val != existing.get("comments", ""):
+                changed = True
 
-            if not changed:
-                continue  # skip unchanged rows
+        if not changed:
+            continue  # skip unchanged
 
-        # --- Build payload ---
         payload = {
             "application": app_id_int,
             "points": points_for_api,
@@ -540,25 +534,29 @@ def push_scores_to_dreamapply(
             payload["comments"] = comment_val
 
         if dry_run:
-            print(f"[DRY RUN] {scoresheet_id} → {payload}")
+            print(
+                f"[DRY RUN] Would update {app_id_int} on scoresheet {scoresheet_id} with {payload}")
             continue
 
+        # Push to DreamApply
         headers = {
             "Authorization": f'DREAM apikey="{api_key}"',
             "Accept": "application/json",
         }
         url = f"{SCORESHEET_BASE_URL}/scoresheets/{scoresheet_id}/scores"
-
         resp = requests.post(url, headers=headers, data=payload)
         if resp.status_code not in (200, 201, 204):
-            print(f"❌ Error {app_id_int}: {resp.status_code} {resp.text}")
+            print(
+                f"❌ Error updating {app_id_int}: {resp.status_code} {resp.text}")
         else:
-            print(f"✅ Updated {app_id_int} → {points_for_api}")
+            print(f"✅ Updated {app_id_int} with points={points_for_api}" +
+                  (f" and comments" if comment_val else ""))
 
 
 # ============================================
 # 🔍 ALIGNMENT SCORES (SUSTAINABILITY / FUNDABILITY / TECHNOLOGY)
 # ============================================
+
 print("\n---- ALIGNMENT ANALYSES (SUSTAINABILITY / FUNDABILITY / TECHNOLOGY) ----")
 
 # --- Column names from DreamApply tableview ---
@@ -1581,12 +1579,6 @@ for col_name, scoresheet_id in SCORESHEET_MAP.items():
     comment_col = SCORESHEET_COMMENTS.get(col_name)
 
     print(f"\n--- Scoresheet {scoresheet_id} from column '{col_name}' ---")
-
-    # Only fetch existing scores for 140–152
-    existing_scores = None
-    if scoresheet_id in CHANGE_CHECK_IDS:
-        existing_scores = fetch_existing_scores(scoresheet_id, API_KEY)
-
     push_scores_to_dreamapply(
         dataframe=df,
         api_key=API_KEY,
@@ -1595,7 +1587,6 @@ for col_name, scoresheet_id in SCORESHEET_MAP.items():
         score_col=col_name,
         comment_col=comment_col,
         dry_run=DRY_RUN_SCORES,
-        existing_scores=existing_scores,  # <--- OPTIONAL
     )
 
 # ============================
